@@ -120,7 +120,7 @@ static int enableRawMode(void)
         return -1;
 
     raw = orig_termios;  /* modify the original mode */
-    raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw.c_iflag &= ~(BRKINT | /*ICRNL |*/ INPCK | ISTRIP | IXON);
     raw.c_oflag &= ~(OPOST);
     raw.c_cflag |= (CS8);
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
