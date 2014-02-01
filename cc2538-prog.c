@@ -107,6 +107,7 @@ static void do_exit(void)
 {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
     puts("exiting\n");
+    exit(1);
 }
 
 static int enableRawMode(void)
