@@ -8,13 +8,12 @@
 #include <stdbool.h>
 #include <getopt.h>
 #include <sys/time.h>
-
-#define SERIAL_TIMEOUT 3
-
 #include <termios.h>
 #include <sys/select.h>
+#include "hex.h"
 
-#define RAM_KB 512
+#define SERIAL_TIMEOUT 3
+#define FLASH_SIZE_KB (512 * 1024)
 #define FLASH_PAGE_SIZE 2048
 #define FLASH_OFFSET 0x00200000
 
@@ -25,7 +24,20 @@
 #define COMMAND_SEND_DATA 0x24
 #define COMMAND_RESET 0x25
 
-#include "hex.h"
+struct context
+{
+    int fd;
+};
+
+static bool opt_console = false;
+static bool opt_flash = false;
+static int opt_timeout = 10;
+static bool opt_device = false;
+static char *flash_filename = NULL;
+static char *device_name = NULL;
+static struct termios orig_termios;
+static uint32_t addr_off = 0x00000000;
+
 
 static struct option long_options[] =
 {
@@ -46,15 +58,6 @@ void usage(void)
     fprintf(stderr, "  --flash=file.hex -f file.hex Reflash device with intel hex file\n");
     fprintf(stderr, "  --timeout=n      -t n        Search for bootload string for n seconds\n");
 }
-
-static bool opt_console = false;
-static bool opt_flash = false;
-static int opt_timeout = 10;
-static bool opt_device = false;
-static char *flash_filename = NULL;
-static char *device_name = NULL;
-static struct termios orig_termios;
-static size_t addr_off = 0x00000000;
 
 int parse_options(int argc, char **argv)
 {
@@ -245,7 +248,7 @@ int run_command(int fd, uint8_t *data, uint8_t len)
 int erase_page(int fd, size_t page)
 {
     uint32_t address = FLASH_OFFSET + (page * FLASH_PAGE_SIZE);
-    uint8_t buf[8];
+    uint8_t buf[9];
 
     buf[0] = COMMAND_ERASE;
     buf[1] = (address & 0xFF000000) >> 24;
@@ -265,9 +268,9 @@ int erase_page(int fd, size_t page)
     return 0;
 }
 
-int download_addr_len(int fd, size_t addr, size_t len)
+int download_addr_len(int fd, uint32_t addr, size_t len)
 {
-    uint8_t buf[8];
+    uint8_t buf[9];
 
     buf[0] = COMMAND_DOWNLOAD;
     buf[1] = (addr & 0xFF000000) >> 24;
@@ -411,16 +414,16 @@ void do_console(int fd)
     }
 }
 
-int handle_record_00(size_t addr, uint8_t *data, uint8_t len, void *ctx)
+int handle_record_00(uint32_t addr, uint8_t *data, uint8_t len, void *vctx)
 {
-    int fd = (int)ctx;
+    struct context *ctx = (struct context *)vctx;
     printf("Writing %d bytes to 0x%08X\n", len, addr + addr_off);
-    if (0 != download_addr_len(fd, addr + addr_off, len))
+    if (0 != download_addr_len(ctx->fd, addr + addr_off, len))
     {
         printf("download_addr_len failed\n");
         return 1;
     }
-    if (0 != send_data(fd, data, len))
+    if (0 != send_data(ctx->fd, data, len))
     {
         printf("send_data failed\n");
         return 1;
@@ -438,6 +441,7 @@ int main(int argc, char *argv[])
 {
     int fd;
     int i;
+    struct context ctx;
 
     if (0 != parse_options(argc, argv))
     {
@@ -451,6 +455,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    ctx.fd = fd;
+
     if (opt_flash)
     {
         if (0 != check_for_bootloader(fd, opt_timeout))
@@ -463,7 +469,7 @@ int main(int argc, char *argv[])
             printf("Bootloader detected\n");
         }
 
-        for (i=0;i<(RAM_KB*1024)/FLASH_PAGE_SIZE;i++)
+        for (i=0;i<FLASH_SIZE_KB/FLASH_PAGE_SIZE;i++)
         {
             printf("Erasing page %d\n", i);
             if (0 != erase_page(fd, i))
@@ -473,7 +479,7 @@ int main(int argc, char *argv[])
             }
         }
 
-        if (0 != read_hexfile(flash_filename, handle_record_00, handle_record_04, (void *)fd))
+        if (0 != read_hexfile(flash_filename, handle_record_00, handle_record_04, &ctx))
         {
             fprintf(stderr, "Failed to read %s\n", flash_filename);
             return 1;
